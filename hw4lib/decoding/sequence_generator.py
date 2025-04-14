@@ -165,163 +165,135 @@ class SequenceGenerator:
             raise ValueError("max_length must be >= input sequence length")
         
         # TODO: Implement greedy search
-        raise NotImplementedError # Remove once implemented
-
-    # def generate_beam(
-    #         self,
-    #         x: torch.Tensor,
-    #         beam_width: int,
-    #         temperature: float = 1.0,
-    #         repeat_penalty: float = 1.0
-    # ) -> Tuple[torch.Tensor, torch.Tensor]:
-    #     """
-    #     Generate sequences using beam search.
-    #     Args:
-    #         x: Input tensor of shape (batch_size, sequence_length)
-    #         beam_width: Number of beams to use
-    #         temperature: Temperature for logits scaling
-    #         repeat_penalty: Penalty for repeated tokens
-    #     Returns:
-    #         Tuple of tensors: (sequences, scores)
-    #          - sequences is of shape (batch_size, beam_width, sequence_length) where each sequence in a beam set is sorted by score
-    #          - scores is of shape (batch_size, beam_width)
-    #     """
-    #     # Add input validation
-    #     if not torch.is_tensor(x):
-    #         raise TypeError("Input x must be a torch tensor")
-    #     if x.dim() != 2:
-    #         raise ValueError("Input x must be 2-dimensional (batch_size, seq_len)")
-    #     if beam_width < 1:
-    #         raise ValueError("beam_width must be >= 1")
-    #     if self.max_length < x.size(1):
-    #         raise ValueError("max_length must be >= input sequence length")
+        # raise NotImplementedError # Remove once implemented
+        batch_size = x.size(0)
+        scores = torch.zeros(batch_size, device=x.device)
+        finished = torch.zeros(batch_size, dtype=torch.bool, device=x.device)
+        for _ in range(self.max_length - x.size(1)):
+        # Check if all sequences have finished
+          if finished.all():
+            break
         
-    #     # TODO: Implement beam search
-    #     raise NotImplementedError # Remove once implemented
-
-    # def generate_sample(
-    #         self,
-    #         x: torch.Tensor,
-    #         temperature: float = 1.0,
-    #         top_k: int = 0,
-    #         top_p: float = 1.0
-    # ) -> Tuple[torch.Tensor, torch.Tensor]:
-    #     """
-    #     Generate sequences using sampling with top-k and nucleus filtering.
-    #     Args:
-    #         x: Input tensor of shape (batch_size, sequence_length)
-    #         temperature: Temperature for logits scaling
-    #         top_k: Number of top-k tokens to sample from
-    #         top_p: Proportion of top-p tokens to sample from
-    #     Returns:
-    #         Tuple of tensors: (sequences, scores)
-    #          - sequences is of shape (batch_size, sequence_length)
-    #          - scores is of shape (batch_size,)
-    #     """
-    #     # Add input validation
-    #     if not torch.is_tensor(x):
-    #         raise TypeError("Input x must be a torch tensor")
-    #     if x.dim() != 2:
-    #         raise ValueError("Input x must be 2-dimensional (batch_size, seq_len)")
-    #     if self.max_length < x.size(1):
-    #         raise ValueError("max_length must be >= input sequence length")
-    #     if temperature <= 0:
-    #         raise ValueError("temperature must be > 0")
-    #     if top_k < 0:
-    #         raise ValueError("top_k must be >= 0")
-    #     if not 0 < top_p <= 1.0:
-    #         raise ValueError("top_p must be > 0 and <= 1.0")
+        # Get logits for next token prediction
+          logits = self.score_fn(x)
         
-    #     # Initialize scores and finished flag
-    #     batch_size = x.size(0)
-    #     scores = torch.zeros(batch_size, device=x.device)
-    #     finished = torch.zeros(batch_size, dtype=torch.bool, device=x.device)
+        # Apply repeat penalty
+          logits = self._apply_repeat_penalty(logits, x, repeat_penalty)
+        
+        # Apply temperature scaling
+          logits = logits / temperature
+        
+        # Convert to log probabilities
+          log_probs = torch.log_softmax(logits, dim=-1)
+        
+        # Get the highest probability tokens and corresponding scores
+          next_token_scores, next_tokens = log_probs.max(dim=-1)
+        
+        # Update scores only for unfinished sequences
+          scores = torch.where(finished, scores, scores + next_token_scores)
+        
+        # Append next tokens to the sequences
+          x = torch.cat([x, next_tokens.unsqueeze(1)], dim=1)
+        
+        # Update finished flags if EOS token is generated
+          is_eos = (next_tokens == self.tokenizer.eos_id)
+          finished = finished | is_eos
+    
+        return x, scores
 
-    #     for _ in range(self.max_length - x.size(1)):
-    #         # Check if all sequences have finished
-    #         if finished.all():
-    #             break
-
-    #         # Get logits and apply filtering
-    #         next_scores = self.score_fn(x) # (batch_size, vocab_size)
-    #         filtered_logits = self._filter_logits(next_scores, temperature, top_k, top_p)
-    #         log_probs = torch.log_softmax(filtered_logits, dim=-1)
-            
-    #         # We need probabilities for multinomial sampling
-    #         probs = torch.exp(log_probs)
-    #         next_tokens = torch.multinomial(probs, num_samples=1).squeeze(-1) # (batch_size,)
-    #         token_scores = log_probs.gather(1, next_tokens.unsqueeze(1)).squeeze(1) # (batch_size,)
-
-    #         # Update scores only for unfinished sequences
-    #         scores = torch.where(finished, scores, scores + token_scores)
-
-    #         # Append next tokens
-    #         x = torch.cat([x, next_tokens.unsqueeze(1)], dim=1) # (batch_size, seq_len + 1)
-
-    #         # Check if any sequence has reached EOS 
-    #         is_eos = (next_tokens == self.tokenizer.eos_id)
-    #         finished = finished | is_eos
-
-    #     return x, scores
-    def generate_greedy(
-            self,
-            x: torch.Tensor,
-            temperature: float = 1.0,
-            repeat_penalty: float = 1.0
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    def generate_beam(
+        self,
+        x: torch.Tensor,
+        beam_width: int,
+        temperature: float = 1.0,
+        repeat_penalty: float = 1.0
+) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Generate sequences using greedy search.
+        Generate sequences using beam search.
         Args:
             x: Input tensor of shape (batch_size, sequence_length)
+            beam_width: Number of beams to use
             temperature: Temperature for logits scaling
             repeat_penalty: Penalty for repeated tokens
         Returns:
             Tuple of tensors: (sequences, scores)
-            - sequences is of shape (batch_size, sequence_length)
-            - scores is of shape (batch_size,)
+            - sequences is of shape (batch_size, beam_width, sequence_length) where each sequence in a beam set is sorted by score
+            - scores is of shape (batch_size, beam_width)
         """
         # Input validation
         if not torch.is_tensor(x):
             raise TypeError("Input x must be a torch tensor")
         if x.dim() != 2:
             raise ValueError("Input x must be 2-dimensional (batch_size, seq_len)")
+        if beam_width < 1:
+            raise ValueError("beam_width must be >= 1")
         if self.max_length < x.size(1):
             raise ValueError("max_length must be >= input sequence length")
-        
+
         batch_size = x.size(0)
-        scores = torch.zeros(batch_size, device=x.device)
-        finished = torch.zeros(batch_size, dtype=torch.bool, device=x.device)
-        
-        for _ in range(self.max_length - x.size(1)):
-            # Early exit if all sequences have finished
-            if finished.all():
+        seq_len = x.size(1)
+        device = x.device
+        vocab_size = self.score_fn(x).size(-1)
+
+        beam_scores = torch.zeros(batch_size, beam_width, device=device)
+        final_flags = torch.zeros(batch_size, beam_width, dtype=torch.bool, device=device)
+
+        starting_lgts = self.score_fn(x)
+
+        starting_lgts = self._apply_repeat_penalty(starting_lgts, x, repeat_penalty)
+
+        starting_lgts = starting_lgts / temperature
+        lg_probability = torch.log_softmax(starting_lgts, dim=-1)
+
+        new_tokens = torch.topk(lg_probability, beam_width, dim=-1).indices
+        scores = torch.topk(lg_probability, beam_width, dim=-1).values
+
+        x = x.unsqueeze(1).expand(-1, beam_width, -1)
+
+        x = torch.cat([x, new_tokens.unsqueeze(-1)], dim=-1)
+
+        final_flags = finished_flags = (new_tokens == self.tokenizer.eos_id)
+        # the beam search loop
+        for i in range(1, self.max_length):
+
+            if final_flags.all():
                 break
-            
-            # Get logits from model
-            logits = self.score_fn(x)  # (batch_size, vocab_size)
-            
-            # Apply repetition penalty
-            logits = self._apply_repeat_penalty(logits, x, repeat_penalty)
-            
-            # Apply temperature scaling
-            logits = logits / temperature
-            
-            # Get next tokens (greedy selection)
-            log_probs = torch.log_softmax(logits, dim=-1)
-            next_tokens = log_probs.argmax(dim=-1)  # (batch_size,)
-            token_scores = log_probs.max(dim=-1).values  # (batch_size,)
-            
-            # Update scores only for unfinished sequences
-            scores = torch.where(finished, scores, scores + token_scores)
-            
-            # Append next tokens to sequences
-            x = torch.cat([x, next_tokens.unsqueeze(1)], dim=1)
-            
-            # Update finished flags
-            is_eos = (next_tokens == self.tokenizer.eos_id)
-            finished = finished | is_eos
-    
+
+            score_data = []
+            for j in range(beam_width):
+                lgts_beam = self.score_fn(x[:, j, :])
+
+                score_data.append(lgts_beam)
+
+            score_data = torch.stack(score_data, dim=1)
+
+            score_data = self._apply_repeat_penalty(score_data, x, repeat_penalty)
+
+            score_data = score_data / temperature
+
+            score_data = torch.log_softmax(score_data, dim=-1)
+
+            sum_scrs = scores.unsqueeze(-1) + score_data
+
+            sum_scrs = sum_scrs.view(batch_size, -1)
+
+            indices = torch.topk(sum_scrs, beam_width, dim=-1).indices
+            scores = torch.gather(sum_scrs, 1, indices)
+
+            beam_indices = indices // vocab_size
+            token_indices = indices % vocab_size
+
+            final_flags = (new_tokens == self.tokenizer.eos_id)
+
+            input = x.reshape(batch_size, beam_width, -1)
+            new_input = torch.zeros_like(input)
+            for k in range(batch_size):
+                new_input[k] = input[k, beam_indices[k]]
+
+            x = torch.cat([new_input, token_indices.unsqueeze(-1)], dim=-1)
+        # returning the sequences and scores
         return x, scores
+
     @staticmethod
     def post_process_sequence(seq: torch.Tensor, tokenizer: H4Tokenizer) -> torch.Tensor:
         """
