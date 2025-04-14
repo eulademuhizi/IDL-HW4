@@ -30,18 +30,18 @@ class ASRDataset(Dataset):
 
         # Setting up data paths
         self.fbank_dir = os.path.join(self.config['root'], self.partition, 'fbank')
-        self.fbank_files = sorted([x for x in os.listdir(self.fbank_dir) if x.endswith('.npy')])
+        self.fbank_files = sorted([f for f in os.listdir(self.fbank_dir) if f.endswith('.npy')])
 
         # Take subset if specified
-        subset_size = self.config.get('subset_size', None)
-        self.fbank_files = self.fbank_files[:subset_size] if subset_size is not None else self.fbank_files
+        subset_size = int(len(self.fbank_files) * self.config.get('subset', 1.0))
+        self.fbank_files = self.fbank_files[:subset_size]
         self.length = len(self.fbank_files)
 
         # Handle text files for non-test partitions
         if self.partition != "test-clean":
             self.text_dir = os.path.join(self.config['root'], self.partition, 'text')
-            self.text_files = sorted([x for x in os.listdir(self.text_dir) if x.endswith('.npy')])
-            self.text_files = self.text_files[:subset_size] if subset_size is not None else self.text_files
+            self.text_files = sorted([f for f in os.listdir(self.text_dir) if f.endswith('.npy')])
+            self.text_files = self.text_files[:subset_size]
 
             # Verify data alignment
             if len(self.fbank_files) != len(self.text_files):
@@ -138,7 +138,6 @@ class ASRDataset(Dataset):
 
         # Apply normalization
         if self.config['norm'] == 'global_mvn':
-            assert self.global_mean is not None and self.global_std is not None, "Global mean and std must be computed before normalization"
             feat = (feat - self.global_mean.unsqueeze(1)) / (self.global_std.unsqueeze(1) + 1e-8)
         elif self.config['norm'] == 'cepstral':
             feat = (feat - feat.mean(dim=1, keepdim=True)) / (feat.std(dim=1, keepdim=True) + 1e-8)
