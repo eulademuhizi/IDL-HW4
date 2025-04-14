@@ -83,7 +83,7 @@ class DecoderOnlyTransformer(nn.Module):
     A Pre-LN Decoder-Only Transformer model.
     '''
 
-    def _init_(
+    def __init__(
             self,
             num_layers: int,
             d_model: int,
@@ -109,7 +109,7 @@ class DecoderOnlyTransformer(nn.Module):
             weight_tying: bool, whether to use weight tying (default: False)
             layer_drop_rate: float, layer drop rate (default: 0.0)
         '''
-        super()._init_()
+        super().__init__()
 
         # TODO: Implement _init_
 
